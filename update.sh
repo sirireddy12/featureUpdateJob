@@ -33,89 +33,81 @@ if [ -f "/usr/local/share/ca-certificates/proxy-cert.crt" ]; then
 	update-ca-certificates
 fi
 
-case $updateAction in
-	Update)
-		echo "Command: export HELM_EXPERIMENTAL_OCI=1 "
-		export HELM_EXPERIMENTAL_OCI=1
 
-		echo "Command: helm chart pull $arcFilePath"
-		helm3 chart pull $arcFilePath
+echo "Command: export HELM_EXPERIMENTAL_OCI=1 "
+export HELM_EXPERIMENTAL_OCI=1
 
-		if [ $? -ne 0 ]; then
-			echo "Failed to pull $arcFilePath"
-			exit $?
-		fi
+echo "Command: helm chart pull $arcFilePath"
+helm3 chart pull $arcFilePath
 
-		echo "Command: helm chart export $arcFilePath --destination ."
-		helm3 chart export $arcFilePath --destination .
+if [ $? -ne 0 ]; then
+	echo "Failed to pull $arcFilePath"
+	exit $?
+fi
 
-		if [ $? -ne 0 ]; then
-			echo "Failed to export the $arcFilePath"
-			exit $?
-		fi
+echo "Command: helm chart export $arcFilePath --destination ."
+helm3 chart export $arcFilePath --destination .
 
-		echo "Command: helm get values $releaseName -n $nameSpace > userValues.txt"
-		helm3 get values $releaseName -n $nameSpace > userValues.txt
+if [ $? -ne 0 ]; then
+	echo "Failed to export the $arcFilePath"
+	exit $?
+fi
 
-		if [ $? -ne 0 ]; then
-			echo "Failed to find the releaseName."
-			exit $?
-		fi
+echo "Command: helm get values $releaseName -n $nameSpace > userValues.txt"
+helm3 get values $releaseName -n $nameSpace > userValues.txt
 
-		# TODO: Remove this part once all users have have upgraded from 0.2.27
-		isProxyEnabled=`echo $(helm3 get values $releaseName -n $nameSpace  -o json)| jq '.global.isProxyEnabled'`
-		proxyEnabled=false
-		if [ "$isProxyEnabled" == null ]; then
-			httpProxy=`echo $(helm3 get values $releaseName -n $nameSpace  -o json)| jq '.global.httpProxy'`
-			httpsProxy=`echo $(helm3 get values $releaseName -n $nameSpace  -o json)| jq '.global.httpsProxy'`
-			noProxy=`echo $(helm3 get values $releaseName -n $nameSpace  -o json)| jq '.global.noProxy'`
+if [ $? -ne 0 ]; then
+	echo "Failed to find the releaseName."
+	exit $?
+fi
 
-			if [ "$httpProxy" != null ] || [ "$httpsProxy" != null ] || [ "$noProxy" != null ]; then
-				proxyEnabled=true
-				export proxyCert=`echo $(helm3 get values $releaseName -n $nameSpace  -o json)| jq '.global.proxyCert'`
-			fi
-		else
-			if [ "$isProxyEnabled" == "true" ]; then
-				proxyEnabled=true
-				export proxyCert=`echo $(helm3 get values $releaseName -n $nameSpace  -o json)| jq '.global.proxyCert'`
-			fi
-		fi
+# TODO: Remove this part once all users have have upgraded from 0.2.27
+isProxyEnabled=`echo $(helm3 get values $releaseName -n $nameSpace  -o json)| jq '.global.isProxyEnabled'`
+proxyEnabled=false
+if [ "$isProxyEnabled" == null ]; then
+	httpProxy=`echo $(helm3 get values $releaseName -n $nameSpace  -o json)| jq '.global.httpProxy'`
+	httpsProxy=`echo $(helm3 get values $releaseName -n $nameSpace  -o json)| jq '.global.httpsProxy'`
+	noProxy=`echo $(helm3 get values $releaseName -n $nameSpace  -o json)| jq '.global.noProxy'`
 
-		echo "Command: helm upgrade $releaseName $fileName -n $nameSpace -f userValues.txt"
+	if [ "$httpProxy" != null ] || [ "$httpsProxy" != null ] || [ "$noProxy" != null ]; then
+		proxyEnabled=true
+		export proxyCert=`echo $(helm3 get values $releaseName -n $nameSpace  -o json)| jq '.global.proxyCert'`
+	fi
+else
+	if [ "$isProxyEnabled" == "true" ]; then
+		proxyEnabled=true
+		export proxyCert=`echo $(helm3 get values $releaseName -n $nameSpace  -o json)| jq '.global.proxyCert'`
+	fi
+fi
 
-		featureArgs=""
-		if [ "$features_clusterConnect" == "true" ]; then
-			echo "Enable cluster connect"
-			featureArgs="--set systemDefaultValues.clusterConnect=true"
-		fi
+#echo "Command: helm upgrade $releaseName $fileName -n $nameSpace -f userValues.txt"
 
-		if [ "$features_customLocations" == "true" ]; then
-		    echo "Enable custom locations"
-			featureArgs="$featureArgs --set systemDefaultValues.customLocations.enabled=true --set systemDefaultValues.customLocations.oid=$features_customLocations_settings_OID"
-		fi
+featureArgs=""
+if [ "$features_clusterConnect" == "true" ]; then
+	echo "Enable cluster connect"
+	featureArgs="--set systemDefaultValues.clusterConnect=true"
+else
+	featureArgs="--set systemDefaultValues.clusterConnect=false"
+fi
 
-		if [ "$features_azureRbac" == "true" ]; then
-			echo "Enable azure rbac"
-			featureArgs="$featureArgs --set systemDefaultValues.gaurd.enabled=true --set systemDefaultValues.gaurd.clientId=$features_azureRbac_settings_appId --set systemDefaultValues.guard.clientSecret=$features_azureRbac_settings_appSecret"
-		helm3 upgrade $releaseName $fileName -n $nameSpace -f userValues.txt --set global.isProxyEnabled=$proxyEnabled $featureArgs --atomic --timeout 25m0s
+if [ "$features_customLocations" == "true" ]; then
+	echo "Enable custom locations"
+	featureArgs="$featureArgs --set systemDefaultValues.customLocations.enabled=true --set systemDefaultValues.customLocations.oid=$features_customLocations_settings_OID"
+else
+	featureArgs="$featureArgs --set systemDefaultValues.customLocations.enabled=false --set systemDefaultValues.customLocations.oid='' "
+fi
 
-		if [ $? -ne 0 ]; then
-			echo "helm upgrade Failed."
-			exit $?
-		fi
+if [ "$features_azureRbac" == "true" ]; then
+	echo "Enable azure rbac"
+	featureArgs="$featureArgs --set systemDefaultValues.gaurd.enabled=true --set systemDefaultValues.gaurd.clientId=$features_azureRbac_settings_appId --set systemDefaultValues.guard.clientSecret=$features_azureRbac_settings_appSecret"
+else
+	featureArgs="$featureArgs --set systemDefaultValues.gaurd.enabled=false"
+fi
 
-		;;
-	Rollback)
-		echo "helm3 rollback $releaseName -n $nameSpace"
-		helm3 rollback $releaseName -n $nameSpace
+echo "Command: helm3 upgrade $releaseName $fileName -n $nameSpace -f userValues.txt --set global.isProxyEnabled=$proxyEnabled $featureArgs --atomic --timeout 25m0s"
+helm3 upgrade $releaseName $fileName -n $nameSpace -f userValues.txt --set global.isProxyEnabled=$proxyEnabled $featureArgs --atomic --timeout 25m0s
 
-		if [ $? -ne 0 ]; then
-			echo "helm Rollback Failed."
-			exit $?
-		fi
-
-		;;
-	*)
-		echo "unknown update action : $updateAction"
-		;;
-esac
+if [ $? -ne 0 ]; then
+	echo "helm upgrade Failed."
+	exit $?
+fi
